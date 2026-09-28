@@ -51,6 +51,7 @@ class MarketTests(unittest.TestCase):
     def test_symbols_reject_non_a_shares(self):
         self.assertEqual(validate_symbol(" SZ000001 "), "sz000001")
         self.assertEqual(validate_symbol("600519"), "sh600519")
+        self.assertEqual(validate_symbol("000300", allow_index=True), "sh000300")
         with self.assertRaises(ValueError):
             validate_symbol("../bad")
 

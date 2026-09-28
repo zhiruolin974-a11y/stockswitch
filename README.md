@@ -1,6 +1,6 @@
-# StockSwitch — Phase 1
+# StockSwitch — Phase 2
 
-StockSwitch is a personal research and learning desktop application for **paper trading only**. It reads public A-share market quotes, uses virtual cash and simulated fills, and never connects to a real securities account or sends a real order. It does not promise investment returns.
+StockSwitch is a personal research and learning desktop application for **live-data paper trading and historical backtesting only**. It uses virtual cash and simulated fills. It never connects to a real securities account or sends a real order. **Backtest performance is not future performance.** No investment return is promised.
 
 ## Start
 
@@ -13,7 +13,7 @@ py -3.12 -m venv .venv
 .\.venv\Scripts\python.exe main.py
 ```
 
-Copy `config.example.toml` to ignored `config.toml` to change the virtual cash, watchlist, refresh intervals, paper fees, risk limits or strategy parameters. If `config.toml` does not exist, the example settings are used. SQLite data is stored in ignored `data/stockswitch.db`; logs are stored in ignored `logs/`.
+Copy `config.example.toml` to ignored `config.toml` to change the virtual cash, watchlist, refresh intervals, paper fees, risk limits, strategy parameters or backtest defaults. If `config.toml` does not exist, the example settings are used. Live paper account state is stored in ignored `data/stockswitch.db`; logs are in ignored `logs/`.
 
 ## Market data and timeliness
 
@@ -40,11 +40,29 @@ Every automatic signal and every manual **SIMULATED / PAPER Buy/Sell** action pa
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 .\.venv\Scripts\python.exe -m unittest tests.test_engine_journal_gui.EngineJournalTests.test_gui_smoke_with_fake_provider -v
 .\.venv\Scripts\python.exe -m unittest tests.test_engine_journal_gui.EngineJournalTests.test_full_buy_mark_sell_pnl -v
+.\.venv\Scripts\python.exe -m unittest tests.test_backtest_gui -v
 .\.venv\Scripts\python.exe -m scripts.smoke_real_market
+.\.venv\Scripts\python.exe -m scripts.smoke_historical
 ```
 
-All automated tests use deterministic fake data and require no public network. The final command is a separate read-only live market check and may fail if the public feed or network is unavailable. A run after 15:00 China time verifies the last published data and prints **Market Closed**; it cannot establish intraday freshness.
+All automated tests use deterministic fake data and require no public network. The last two commands are separate read-only public market checks and may fail if a feed or network is unavailable. A live check after 15:00 China time verifies the last published data and prints **Market Closed**; it cannot establish intraday freshness.
+
+## Historical backtesting
+
+The Backtest tab accepts one or more Shanghai/Shenzhen A-share symbols, a date range, initial virtual cash, the daily frequency, the `TrendBreakoutStrategy`, a benchmark (default CSI 300, `sh000300`), an explicit security profile, and either cached Tencent history or deterministic fake data. Download and calculation run in a worker thread; Cancel stops without saving an incomplete official result. Progress, summary metrics, equity/benchmark curves, drawdown, simulated execution history and export are shown in the tab.
+
+The historical provider requests Tencent Finance daily OHLCV using the [current AKShare `stock_zh_a_hist_tx` integration](https://github.com/akfamily/akshare/blob/main/akshare/stock_feature/stock_hist_tx.py). This is a public read-only website feed, with no guaranteed service contract or completeness. It was verified in September 2026 for two A-share stocks and CSI 300. Network access is needed for uncovered ranges; previously downloaded ranges work offline. Only **daily** bars are supported. The provider and `data/history/daily.sqlite` cache distinguish `none`, `qfq` and `hfq` adjustment; backtests default to **none** and use one adjustment consistently for both indicators and fills. Adjusted bars do not model cash dividends or other corporate actions separately. Minute bars are not included.
+
+The cache stores bars plus coverage metadata (symbol, daily frequency, adjustment, start/end, provider, updated time). Only uncovered date intervals are downloaded. Missing a bar on an observed CSI 300 trading day prevents a fill for that stock. The benchmark's observed sessions form the backtest trading calendar, including weekends and past exchange holidays. It supports previous/next trading day queries. Dates outside observed coverage are unknown, rather than guessed. A benchmark feed omission could still be mistaken for a market closure; compare important runs with an official exchange calendar before relying on them.
+
+The strategy reuses the Phase 1 implementation. It consumes completed daily bars chronologically, warming up before the requested start without booking warmup returns. At **T day 15:00**, it may generate a signal using data through T and prior-window values through T−1. That signal can only become an order and simulated fill at **the next observed trading day's 09:30 open**. Risk checks run at that open. All symbols share a single chronological portfolio, cash balance, T+1 availability and daily loss limit. No future bar close, high or low sets the execution price. A dedicated test mutates future bars and verifies earlier signals remain unchanged.
+
+`BacktestBroker` reuses `PaperBroker`'s virtual account and `TradingCostModel`: next bar open plus directional slippage, commission with minimum, and sell-side stamp tax. The example `config.example.toml` uses 5 basis points slippage, 0.03% commission with ¥5 minimum, and 0.05% sell stamp tax. These are **simulation parameters**, not a quote for any user's broker. [Shanghai Stock Exchange trading guidance](https://one.sse.com.cn/onething/gptz/) describes the exchange stamp tax; broker commission and other costs vary. The program does not model order-book liquidity, partial fills or auction price formation.
+
+Buying uses 100-share lots. A full residual position containing an odd lot may be sold in one order, consistent with [Shenzhen Stock Exchange investor guidance](https://investor.szse.cn/institute/bookshelf/manualseriesbook/P020230403389861343977.pdf). Price limits use an **explicit, date-valid security profile**: regular main board 10%, ST main board 5%, ChiNext/STAR 20%, with a conservative no-fill assumption at a buy upper limit or sell lower limit. The [SZSE main-board guide](https://investor.szse.cn/institute/bookshelf/manualseriesbook/P020230403389861343977.pdf) and [SSE trading rules](https://www.sse.com.cn/lawandrules/sselawsrules2025/stocks/exchange/c/c_20260424_10816482.shtml) describe these different regimes and exceptions. Default `unknown` blocks fills; select a profile only after verifying it applies for the **entire chosen period**. IPO no-limit days, changing ST status, exceptional exchange rules, ex-right reference prices and exchange rounding are not automatically identified. Zero-volume bars and dates missing a stock bar are conservatively unfillable; the source does not prove the precise suspension reason.
+
+The result records source, data range/hash, adjustment, strategy and cost parameters, benchmark, executions and completed round trips. Metrics include total and annualized return, equity-based maximum drawdown with peak/trough dates, daily volatility, Sharpe, win/loss rate, profit factor and holding period. Sharpe uses daily returns, a configurable annual risk-free rate (default 2%) and configurable **252** trading-day annualization. Insufficient data yields `N/A`, not an invented value. Benchmark return normalizes its first in-range close to initial virtual capital. The separately stored completed-run index is `data/backtests.db`; `summary.json`, `trades.csv` and `equity_curve.csv` export to ignored `exports/backtests/<run_id>/` or another selected folder inside `D:\stockswitch`.
 
 ## Safety and limits
 
-No real broker adapter, login, token, password, real account access, real order submission or AI trade execution exists in Phase 1. The public quote source offers no completeness or timeliness guarantee. The weekday-only calendar, no historical warm start, no suspension/limit-up/limit-down checks, simplified immediate fills and one-process SQLite writer mean the application is a research prototype, not a production trading system.
+No real broker adapter, login, token, password, real account access, real order submission or AI trade execution exists. The live Paper tab retains Phase 1's weekday-only calendar and sampled-quote warmup; the historical Backtest tab uses observed benchmark sessions and downloaded warmup bars. Public feeds, simplified fills, explicit security-profile assumptions and missing corporate-action cash flows make this a research prototype, not a production trading system.

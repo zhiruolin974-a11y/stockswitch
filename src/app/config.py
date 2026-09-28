@@ -32,6 +32,10 @@ class AppConfig:
     breakout_window: int
     volume_multiplier: float
     order_quantity: int
+    backtest_risk_free_rate: float = 0.02
+    backtest_annualization_factor: int = 252
+    backtest_benchmark: str = "sh000300"
+    backtest_security_profile: str = "unknown"
 
 
 def load_config(path: Path | None = None) -> AppConfig:
@@ -39,6 +43,7 @@ def load_config(path: Path | None = None) -> AppConfig:
     with source.open("rb") as handle:
         data = tomllib.load(handle)
     app, paper, risk, strategy = (data[key] for key in ("app", "paper", "risk", "strategy"))
+    backtest = data.get("backtest", {})
     config = AppConfig(
         initial_cash=float(app["initial_cash"]),
         watchlist=tuple(app["watchlist"]),
@@ -62,6 +67,10 @@ def load_config(path: Path | None = None) -> AppConfig:
         breakout_window=int(strategy["breakout_window"]),
         volume_multiplier=float(strategy["volume_multiplier"]),
         order_quantity=int(strategy["order_quantity"]),
+        backtest_risk_free_rate=float(backtest.get("risk_free_rate", 0.02)),
+        backtest_annualization_factor=int(backtest.get("annualization_factor", 252)),
+        backtest_benchmark=str(backtest.get("benchmark", "sh000300")),
+        backtest_security_profile=str(backtest.get("security_profile", "unknown")),
     )
     if config.initial_cash <= 0 or config.market_refresh_seconds < 5 or config.closed_refresh_seconds < 60:
         raise ValueError("Invalid cash or refresh interval")

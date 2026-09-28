@@ -9,11 +9,12 @@ from datetime import datetime
 from PySide6.QtCore import QThread, Signal
 from PySide6.QtWidgets import (QAbstractItemView, QComboBox, QHBoxLayout, QLabel,
     QLineEdit, QMainWindow, QPushButton, QSpinBox, QTableWidget, QTableWidgetItem,
-    QVBoxLayout, QWidget)
+    QVBoxLayout, QWidget, QTabWidget)
 
 from src.market.calendar import SHANGHAI
 from src.trading.engine import TradingEngine
 from src.trading.models import OrderSide
+from src.ui.backtest_tab import BacktestTab
 
 
 LOG = logging.getLogger(__name__)
@@ -97,7 +98,11 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("StockSwitch — PAPER TRADING")
         self.resize(1050, 780)
         root = QWidget()
-        self.setCentralWidget(root)
+        tabs = QTabWidget()
+        self.setCentralWidget(tabs)
+        tabs.addTab(root, "Live Paper Trading")
+        self.backtest_tab = BacktestTab(engine.config)
+        tabs.addTab(self.backtest_tab, "Backtest")
         layout = QVBoxLayout(root)
         layout.addWidget(QLabel("StockSwitch    PAPER TRADING    LIVE MARKET DATA + PAPER TRADING"))
         self.status_label = QLabel("Disconnected | Data Source: Tencent Finance | Approximate Real-Time / Delayed")
@@ -215,6 +220,7 @@ class MainWindow(QMainWindow):
                                    f"Unrealized PnL {state['unrealized']:+.2f} | Daily PnL {state['daily']:+.2f}")
 
     def closeEvent(self, event) -> None:
+        self.backtest_tab.stop()
         self.stop_monitoring()
         self.engine.journal.close()
         LOG.info("Application closed")

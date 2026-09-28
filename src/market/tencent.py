@@ -20,6 +20,8 @@ LINE = re.compile(r'v_(sh\d{6}|sz\d{6})="([^"]*)";')
 
 def validate_symbol(symbol: str, *, allow_index: bool = False) -> str:
     value = symbol.strip().lower()
+    if allow_index and value == "000300":
+        return "sh000300"
     if BARE_CODE.fullmatch(value):
         value = ("sh" if value.startswith(("600", "601", "603", "605", "688")) else "sz") + value
     if STOCK_CODE.fullmatch(value) or (allow_index and INDEX_CODE.fullmatch(value)):

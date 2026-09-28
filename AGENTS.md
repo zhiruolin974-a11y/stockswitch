@@ -6,4 +6,5 @@
 - Treat missing, stale, invalid or regressing market data as a trading stop. Show the data source, timestamp and approximate/delayed status.
 - Tests use the deterministic FakeMarketDataProvider and do not need public network access.
 - Never commit user configuration, databases, logs, caches, secrets or credentials. The only permitted GitHub remote is `https://github.com/zhiruolin974-a11y/stockswitch.git`; never force push.
-- Before claiming a phase complete, run compileall, all unit tests, GUI smoke, functional smoke, `git diff --check`, sensitive-data review, commit and push. Report failures honestly. Stop after Phase 1.
+- Phase 2 adds historical research and backtesting only. Keep live paper trading behavior intact; use only market data and virtual funds. Never start Phase 3 without instruction.
+- Before claiming a phase complete, run compileall, all unit tests, GUI smoke, functional smoke, `git diff --check`, sensitive-data review, commit and push. Report failures honestly.
