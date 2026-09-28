@@ -27,3 +27,11 @@ long_window = 60
 breakout_window = 20
 volume_multiplier = 1.0
 order_quantity = 100
+
+[backtest]
+frequency = "daily"
+adjustment = "none"
+benchmark = "sh000300"
+risk_free_rate = 0.02
+annualization_factor = 252
+security_profile = "unknown"

@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import defaultdict, deque
 
 from src.market.models import MarketQuote
+from src.market.historical import MarketBar
 from src.trading.models import OrderSide, TradingSignal
 
 
@@ -17,6 +18,21 @@ class TrendBreakoutStrategy:
         self.breakout_window = breakout_window
         self.volume_multiplier = volume_multiplier
         self.history: dict[str, deque[MarketQuote]] = defaultdict(lambda: deque(maxlen=max(long_window, breakout_window) + 1))
+        self._historical_volume: dict[str, float] = defaultdict(float)
+        self._historical_close: dict[str, float] = {}
+
+    def on_bar(self, bar: MarketBar, has_position: bool) -> TradingSignal | None:
+        """Reuse the live strategy on a completed daily bar only."""
+        if bar.volume <= 0:
+            return None
+        self._historical_volume[bar.symbol] += bar.volume
+        previous = self._historical_close.get(bar.symbol, bar.open)
+        self._historical_close[bar.symbol] = bar.close
+        quote = MarketQuote(bar.symbol, bar.symbol, bar.timestamp, bar.timestamp, bar.close,
+                            bar.open, bar.high, bar.low, previous, self._historical_volume[bar.symbol],
+                            bar.turnover, bar.close - previous, (bar.close / previous - 1) * 100,
+                            "Historical completed daily bar", True)
+        return self.on_quote(quote, has_position)
 
     def on_quote(self, quote: MarketQuote, has_position: bool) -> TradingSignal | None:
         samples = self.history[quote.symbol]

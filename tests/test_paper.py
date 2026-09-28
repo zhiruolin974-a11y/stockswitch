@@ -3,6 +3,7 @@ from datetime import timedelta
 
 from src.broker.paper import PaperBroker
 from src.portfolio.portfolio import Portfolio
+from src.portfolio.portfolio import Position
 from src.trading.models import Order, OrderSide, OrderStatus
 from tests.helpers import OPEN, config, quote
 
@@ -66,3 +67,9 @@ class PaperTests(unittest.TestCase):
         self.assertEqual(len(self.broker.query_trades()), 1)
         self.assertFalse(self.broker.cancel_order(order.id))
         self.assertEqual(self.broker.query_cash(), self.portfolio.available_cash)
+
+    def test_full_odd_lot_sale(self):
+        self.portfolio.positions["sz000001"] = Position("sz000001", 150, 150, 10, 10)
+        order, fill, _ = self.submit(OrderSide.SELL, quantity=150)
+        self.assertEqual(order.status, OrderStatus.FILLED)
+        self.assertEqual(fill.quantity, 150)

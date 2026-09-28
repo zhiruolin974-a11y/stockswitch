@@ -68,3 +68,10 @@ class StrategyRiskTests(unittest.TestCase):
         self.portfolio.positions["sh600000"] = Position("sh600000", 9990, 9990, 10, 10)
         self.assertIn("cash", self.risk.assess(signal(q), 100, q, self.portfolio, OPEN).reason)
         self.assertIn("holdings", self.risk.assess(signal(q, OrderSide.SELL), 100, q, self.portfolio, OPEN).reason)
+
+    def test_full_odd_lot_exit_allowed_but_partial_odd_lot_rejected(self):
+        q = quote()
+        self.portfolio.available_cash = 98500
+        self.portfolio.positions[q.symbol] = Position(q.symbol, 150, 150, 10, 10)
+        self.assertTrue(self.risk.assess(signal(q, OrderSide.SELL), 150, q, self.portfolio, OPEN).accepted)
+        self.assertFalse(self.risk.assess(signal(q, OrderSide.SELL), 50, q, self.portfolio, OPEN).accepted)

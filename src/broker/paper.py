@@ -4,6 +4,7 @@ import logging
 from datetime import datetime
 
 from src.app.config import AppConfig
+from src.broker.costs import TradingCostModel
 from src.market.models import MarketQuote
 from src.portfolio.portfolio import Portfolio, Position
 from src.trading.models import Fill, Order, OrderSide, OrderStatus, Trade
@@ -17,6 +18,7 @@ class PaperBroker:
 
     def __init__(self, config: AppConfig, portfolio: Portfolio):
         self.config = config
+        self.costs = TradingCostModel.from_config(config)
         self.portfolio = portfolio
         self.orders: list[Order] = []
         self.fills: list[Fill] = []
@@ -24,16 +26,17 @@ class PaperBroker:
 
     def submit_order(self, order: Order, quote: MarketQuote, at: datetime) -> tuple[Fill | None, Trade | None]:
         self.orders.append(order)
+        position = self.portfolio.positions.get(order.symbol)
+        odd_lot_exit = (order.side == OrderSide.SELL and position is not None
+                        and order.quantity == position.available_quantity and order.quantity > 0)
         if (order.status != OrderStatus.NEW or order.symbol != quote.symbol or order.quantity <= 0
-                or order.quantity % self.config.lot_size or order.side not in (OrderSide.BUY, OrderSide.SELL)):
+                or (order.quantity % self.config.lot_size and not odd_lot_exit)
+                or order.side not in (OrderSide.BUY, OrderSide.SELL)):
             order.status = OrderStatus.REJECTED
             order.reject_reason = "Invalid paper order"
             return None, None
-        direction = 1 if order.side == OrderSide.BUY else -1
-        price = quote.last_price * (1 + direction * self.config.slippage_bps / 10000)
-        price = round(price, 4)
-        commission = round(max(order.quantity * price * self.config.commission_rate, self.config.minimum_commission), 2)
-        stamp_tax = round(order.quantity * price * self.config.stamp_tax_rate, 2) if order.side == OrderSide.SELL else 0.0
+        price = self.costs.fill_price(quote.last_price, order.side)
+        commission, stamp_tax = self.costs.fees(price, order.quantity, order.side)
         order.order_price = price
         fill = Fill(order.id, order.symbol, order.side, order.quantity, order.signal_price, order.order_price,
                     price, round(price - quote.last_price, 4), commission, stamp_tax, at)

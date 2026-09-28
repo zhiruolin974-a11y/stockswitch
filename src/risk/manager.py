@@ -21,7 +21,8 @@ class RiskManager:
         self.config = config
         self.rules = rules
 
-    def assess(self, signal: TradingSignal, quantity: int, quote: MarketQuote, portfolio: Portfolio, now: datetime) -> RiskDecision:
+    def assess(self, signal: TradingSignal, quantity: int, quote: MarketQuote, portfolio: Portfolio, now: datetime,
+               *, deferred: bool = False) -> RiskDecision:
         def reject(reason: str) -> RiskDecision:
             return RiskDecision(False, reason)
 
@@ -29,17 +30,24 @@ class RiskManager:
             return reject("A-share market is not open")
         if signal.side not in (OrderSide.BUY, OrderSide.SELL):
             return reject("Only BUY and SELL can become orders")
-        if signal.symbol != quote.symbol or signal.timestamp != quote.timestamp or signal.reference_price != quote.last_price:
+        if signal.symbol != quote.symbol:
+            return reject("Signal symbol does not match quote")
+        if deferred:
+            if signal.timestamp >= quote.timestamp or signal.reference_price <= 0:
+                return reject("Deferred signal must precede execution quote")
+        elif signal.timestamp != quote.timestamp or signal.reference_price != quote.last_price:
             return reject("Signal does not match current market quote")
         try:
             quote.require_fresh(now, self.config.max_quote_age_seconds)
         except Exception as exc:
             return reject(f"Data stale: {exc}")
-        if quantity <= 0 or quantity % self.config.lot_size:
-            return reject(f"Quantity must be a positive multiple of {self.config.lot_size}")
+        position = portfolio.positions.get(signal.symbol)
+        odd_lot_exit = (signal.side == OrderSide.SELL and position is not None
+                        and quantity == position.available_quantity and quantity > 0)
+        if quantity <= 0 or (quantity % self.config.lot_size and not odd_lot_exit):
+            return reject("Quantity must be a positive lot multiple or a full odd-lot exit")
         if portfolio.daily_pnl <= -portfolio.day_start_equity * self.config.max_daily_loss:
             return reject("Daily virtual loss limit reached")
-        position = portfolio.positions.get(signal.symbol)
         if signal.side == OrderSide.SELL:
             if not self.config.allow_sell:
                 return reject("Selling disabled by configuration")
