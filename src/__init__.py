@@ -1,0 +1,1 @@
+"""StockSwitch application package."""

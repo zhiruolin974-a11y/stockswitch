@@ -1,0 +1,29 @@
+[app]
+initial_cash = 100000.0
+watchlist = ["sh600519", "sz000001"]
+market_refresh_seconds = 5
+closed_refresh_seconds = 120
+max_quote_age_seconds = 20
+strategy_enabled = true
+
+[paper]
+slippage_bps = 5
+commission_rate = 0.0003
+minimum_commission = 5.0
+stamp_tax_rate = 0.0005
+lot_size = 100
+
+[risk]
+max_single_position = 0.10
+max_total_position = 0.60
+max_order_fraction = 0.10
+max_daily_loss = 0.02
+allow_buy = true
+allow_sell = true
+
+[strategy]
+short_window = 20
+long_window = 60
+breakout_window = 20
+volume_multiplier = 1.0
+order_quantity = 100
