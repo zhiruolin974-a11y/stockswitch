@@ -6,22 +6,22 @@ import sqlite3
 from dataclasses import asdict
 from pathlib import Path
 
-from src.app.config import ROOT
+from src.app.paths import AppPaths
 from src.backtest.models import BacktestResult
 
 
-def _within_project(path: Path) -> Path:
+def _within_data_root(path: Path, paths: AppPaths) -> Path:
     resolved = path.resolve()
-    if not resolved.is_relative_to(ROOT):
-        raise ValueError("Backtest outputs must remain inside D:\\stockswitch")
+    if not resolved.is_relative_to(paths.app_data_dir.resolve()):
+        raise ValueError("Backtest outputs must remain inside the application data directory")
     return resolved
 
 
 class BacktestRunStore:
     """Separate from live paper-trading journal."""
 
-    def __init__(self, path: Path):
-        path = _within_project(path)
+    def __init__(self, path: Path, *, paths: AppPaths | None = None):
+        path = _within_data_root(path, paths or AppPaths.for_runtime())
         path.parent.mkdir(parents=True, exist_ok=True)
         self.connection = sqlite3.connect(path, check_same_thread=False)
         self.connection.execute("""
@@ -49,8 +49,10 @@ class BacktestRunStore:
         self.connection.close()
 
 
-def export_result(result: BacktestResult, output_dir: Path | None = None) -> Path:
-    target = _within_project(output_dir or ROOT / "exports" / "backtests" / result.run_id)
+def export_result(result: BacktestResult, output_dir: Path | None = None,
+                  *, paths: AppPaths | None = None) -> Path:
+    paths = paths or AppPaths.for_runtime()
+    target = _within_data_root(output_dir or paths.exports_dir / "backtests" / result.run_id, paths)
     target.mkdir(parents=True, exist_ok=True)
     summary = {
         "run_id": result.run_id, "created_at": result.created_at.isoformat(),

@@ -1,8 +1,47 @@
-# StockSwitch — Phase 2
+# StockSwitch — Phase 2.5 Windows desktop packaging
 
 StockSwitch is a personal research and learning desktop application for **live-data paper trading and historical backtesting only**. It uses virtual cash and simulated fills. It never connects to a real securities account or sends a real order. **Backtest performance is not future performance.** No investment return is promised.
 
-## Start
+## Windows installation and running
+
+Three options are supported: an Inno Setup installer when available, the
+`release/StockSwitch-0.2.0-Windows-x64.zip` portable archive, or Python source.
+For the portable archive, extract the complete `StockSwitch/` directory and
+double-click `StockSwitch.exe`; keep `_internal/` beside it. No console or
+separate Python installation is needed. The installer adds a Start Menu entry
+and an optional desktop shortcut. Uninstalling does not remove user data.
+
+The packaged program stores configuration, the paper journal, historical cache,
+logs and exports under `%LOCALAPPDATA%\StockSwitch` (`config/config.toml`,
+`data/stockswitch.db`, `data/history/daily.sqlite`, `logs/stockswitch.log`,
+`exports/`). The first launch creates missing directories and a credential-free
+config template without replacing existing files. To diagnose startup errors,
+inspect `logs/stockswitch.log`. In source mode, the existing ignored project-root
+locations are preserved; `STOCKSWITCH_DATA_HOME` can override the data root for
+isolated tests. Neither EXE nor installer stores runtime data in its program
+directory. Packaging does not add any real brokerage connection, real account
+access or real orders.
+
+Build on Windows with Python 3.12+, the project venv and PyInstaller:
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -e ".[windows-build]"
+powershell -ExecutionPolicy Bypass -File scripts/build_windows.ps1
+```
+
+The script builds an onedir, windowed EXE, generates a portable ZIP and, if
+`ISCC.exe` is installed, compiles `installer/StockSwitch.iss`. Build products
+under `build/`, `dist/` and `release/` are ignored by Git. The program icon is
+an original generated project asset. See `THIRD_PARTY_NOTICES.md` for the
+third-party release review still required before public distribution.
+
+For isolated frozen-package checks, set an absolute `STOCKSWITCH_DATA_HOME`
+outside your production LocalAppData and run `StockSwitch.exe --self-test` for
+GUI/Fake Paper/Backtest/export, or `StockSwitch.exe --network-smoke` for public
+read-only quote and historical-download checks. These smoke flags refuse to
+write into the normal user data directory.
+
+## Start from source
 
 Use Python 3.12 or newer on Windows:
 
@@ -13,7 +52,7 @@ py -3.12 -m venv .venv
 .\.venv\Scripts\python.exe main.py
 ```
 
-Copy `config.example.toml` to ignored `config.toml` to change the virtual cash, watchlist, refresh intervals, paper fees, risk limits, strategy parameters or backtest defaults. If `config.toml` does not exist, the example settings are used. Live paper account state is stored in ignored `data/stockswitch.db`; logs are in ignored `logs/`.
+Edit ignored `config.toml` to change the virtual cash, watchlist, refresh intervals, paper fees, risk limits, strategy parameters or backtest defaults. If it does not exist, the first launch copies the example settings. Live paper account state is stored in ignored `data/stockswitch.db`; logs are in ignored `logs/`.
 
 ## Market data and timeliness
 
@@ -51,7 +90,7 @@ All automated tests use deterministic fake data and require no public network. T
 
 The Backtest tab accepts one or more Shanghai/Shenzhen A-share symbols, a date range, initial virtual cash, the daily frequency, the `TrendBreakoutStrategy`, a benchmark (default CSI 300, `sh000300`), an explicit security profile, and either cached Tencent history or deterministic fake data. Download and calculation run in a worker thread; Cancel stops without saving an incomplete official result. Progress, summary metrics, equity/benchmark curves, drawdown, simulated execution history and export are shown in the tab.
 
-The historical provider requests Tencent Finance daily OHLCV using the [current AKShare `stock_zh_a_hist_tx` integration](https://github.com/akfamily/akshare/blob/main/akshare/stock_feature/stock_hist_tx.py). This is a public read-only website feed, with no guaranteed service contract or completeness. It was verified in September 2026 for two A-share stocks and CSI 300. Network access is needed for uncovered ranges; previously downloaded ranges work offline. Only **daily** bars are supported. The provider and `data/history/daily.sqlite` cache distinguish `none`, `qfq` and `hfq` adjustment; backtests default to **none** and use one adjustment consistently for both indicators and fills. Adjusted bars do not model cash dividends or other corporate actions separately. Minute bars are not included.
+The historical provider requests Tencent Finance daily OHLCV using the [current AKShare `stock_zh_a_hist_tx` integration](https://github.com/akfamily/akshare/blob/main/akshare/stock_feature/stock_hist_tx.py). This is a public read-only website feed, with no guaranteed service contract or completeness. It was verified in September 2026 for two A-share stocks and CSI 300. Network access is needed for uncovered ranges; previously downloaded ranges work offline. Only **daily** bars are supported. The provider and `data/history/daily.sqlite` cache (under the source root or packaged AppData root) distinguish `none`, `qfq` and `hfq` adjustment; backtests default to **none** and use one adjustment consistently for both indicators and fills. Adjusted bars do not model cash dividends or other corporate actions separately. Minute bars are not included.
 
 The cache stores bars plus coverage metadata (symbol, daily frequency, adjustment, start/end, provider, updated time). Only uncovered date intervals are downloaded. Missing a bar on an observed CSI 300 trading day prevents a fill for that stock. The benchmark's observed sessions form the backtest trading calendar, including weekends and past exchange holidays. It supports previous/next trading day queries. Dates outside observed coverage are unknown, rather than guessed. A benchmark feed omission could still be mistaken for a market closure; compare important runs with an official exchange calendar before relying on them.
 
@@ -61,7 +100,7 @@ The strategy reuses the Phase 1 implementation. It consumes completed daily bars
 
 Buying uses 100-share lots. A full residual position containing an odd lot may be sold in one order, consistent with [Shenzhen Stock Exchange investor guidance](https://investor.szse.cn/institute/bookshelf/manualseriesbook/P020230403389861343977.pdf). Price limits use an **explicit, date-valid security profile**: regular main board 10%, ST main board 5%, ChiNext/STAR 20%, with a conservative no-fill assumption at a buy upper limit or sell lower limit. The [SZSE main-board guide](https://investor.szse.cn/institute/bookshelf/manualseriesbook/P020230403389861343977.pdf) and [SSE trading rules](https://www.sse.com.cn/lawandrules/sselawsrules2025/stocks/exchange/c/c_20260424_10816482.shtml) describe these different regimes and exceptions. Default `unknown` blocks fills; select a profile only after verifying it applies for the **entire chosen period**. IPO no-limit days, changing ST status, exceptional exchange rules, ex-right reference prices and exchange rounding are not automatically identified. Zero-volume bars and dates missing a stock bar are conservatively unfillable; the source does not prove the precise suspension reason.
 
-The result records source, data range/hash, adjustment, strategy and cost parameters, benchmark, executions and completed round trips. Metrics include total and annualized return, equity-based maximum drawdown with peak/trough dates, daily volatility, Sharpe, win/loss rate, profit factor and holding period. Sharpe uses daily returns, a configurable annual risk-free rate (default 2%) and configurable **252** trading-day annualization. Insufficient data yields `N/A`, not an invented value. Benchmark return normalizes its first in-range close to initial virtual capital. The separately stored completed-run index is `data/backtests.db`; `summary.json`, `trades.csv` and `equity_curve.csv` export to ignored `exports/backtests/<run_id>/` or another selected folder inside `D:\stockswitch`.
+The result records source, data range/hash, adjustment, strategy and cost parameters, benchmark, executions and completed round trips. Metrics include total and annualized return, equity-based maximum drawdown with peak/trough dates, daily volatility, Sharpe, win/loss rate, profit factor and holding period. Sharpe uses daily returns, a configurable annual risk-free rate (default 2%) and configurable **252** trading-day annualization. Insufficient data yields `N/A`, not an invented value. Benchmark return normalizes its first in-range close to initial virtual capital. The separately stored completed-run index is `data/backtests.db`; `summary.json`, `trades.csv` and `equity_curve.csv` export to ignored `exports/backtests/<run_id>/` or another selected folder inside the active application data root.
 
 ## Safety and limits
 

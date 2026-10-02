@@ -10,6 +10,9 @@ database/
 *.sqlite3
 build/
 dist/
+release/
+*.exe
+*.zip
 exports/
 *.egg-info/
 config.toml
