@@ -1,4 +1,5 @@
 [app]
+config_schema_version = 1
 initial_cash = 100000.0
 watchlist = ["sh600519", "sz000001"]
 market_refresh_seconds = 5

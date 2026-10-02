@@ -10,7 +10,8 @@ from PySide6.QtWidgets import (QComboBox, QDateEdit, QDoubleSpinBox, QFormLayout
     QLabel, QLineEdit, QProgressBar, QPushButton, QTableWidget, QTableWidgetItem,
     QVBoxLayout, QWidget)
 
-from src.app.config import AppConfig, ROOT
+from src.app.config import AppConfig
+from src.app.paths import AppPaths
 from src.backtest.engine import BacktestCancelled, BacktestEngine
 from src.backtest.models import BacktestConfig, BacktestResult, EquityPoint
 from src.backtest.reporting import BacktestRunStore, export_result
@@ -94,11 +95,13 @@ class BacktestWorker(QThread):
     failed = Signal(str)
     cancelled = Signal()
 
-    def __init__(self, app_config: AppConfig, config: BacktestConfig, source: str):
+    def __init__(self, app_config: AppConfig, config: BacktestConfig, source: str,
+                 paths: AppPaths | None = None):
         super().__init__()
         self.app_config = app_config
         self.config = config
         self.source = source
+        self.paths = paths or AppPaths.for_runtime()
         self.cancel_requested = threading.Event()
 
     def run(self) -> None:
@@ -109,14 +112,14 @@ class BacktestWorker(QThread):
                 provider = fake_daily_provider(tuple(dict.fromkeys((*self.config.symbols, self.config.benchmark))),
                                                warm_start, self.config.end_date, self.config.adjustment)
             else:
-                cache = HistoricalCache(ROOT / "data" / "history" / "daily.sqlite",
+                cache = HistoricalCache(self.paths.history_database_path,
                                         TencentHistoricalMarketDataProvider())
                 provider = cache
             result = BacktestEngine(provider, self.app_config).run(
                 self.config, self.cancel_requested, lambda n, stage: self.progress_changed.emit(n, stage))
             if self.cancel_requested.is_set():
                 raise BacktestCancelled()
-            store = BacktestRunStore(ROOT / "data" / "backtests.db")
+            store = BacktestRunStore(self.paths.backtests_path, paths=self.paths)
             try:
                 store.save(result)
             finally:
@@ -125,6 +128,8 @@ class BacktestWorker(QThread):
         except BacktestCancelled:
             self.cancelled.emit()
         except Exception as exc:
+            import logging
+            logging.getLogger(__name__).exception("Backtest failed")
             self.failed.emit(str(exc))
         finally:
             if cache:
@@ -132,9 +137,10 @@ class BacktestWorker(QThread):
 
 
 class BacktestTab(QWidget):
-    def __init__(self, app_config: AppConfig):
+    def __init__(self, app_config: AppConfig, *, paths: AppPaths | None = None):
         super().__init__()
         self.app_config = app_config
+        self.paths = paths or AppPaths.for_runtime()
         self.worker: BacktestWorker | None = None
         self.result: BacktestResult | None = None
         layout = QVBoxLayout(self)
@@ -159,7 +165,7 @@ class BacktestTab(QWidget):
         self.security_profile.setCurrentText(app_config.backtest_security_profile)
         self.profile_overrides = QLineEdit()
         self.profile_overrides.setPlaceholderText("Optional: sz000001=main_normal,sz300750=chinext")
-        self.output_path = QLineEdit(str(ROOT / "exports" / "backtests"))
+        self.output_path = QLineEdit(str(self.paths.exports_dir / "backtests"))
         for label, widget in (("Symbols (comma separated)", self.symbols_input), ("Start Date", self.start_date),
                               ("End Date", self.end_date), ("Frequency", self.frequency),
                               ("Initial Cash", self.initial_cash), ("Strategy", self.strategy_name),
@@ -215,7 +221,7 @@ class BacktestTab(QWidget):
         except (ValueError, TypeError) as exc:
             self.message.setText(f"Invalid backtest input: {exc}")
             return
-        self.worker = BacktestWorker(self.app_config, config, self.source.currentText())
+        self.worker = BacktestWorker(self.app_config, config, self.source.currentText(), self.paths)
         self.worker.progress_changed.connect(self.on_progress)
         self.worker.completed.connect(self.on_result)
         self.worker.failed.connect(self.on_failed)
@@ -274,7 +280,8 @@ class BacktestTab(QWidget):
         if self.result is None:
             return
         try:
-            target = export_result(self.result, Path(self.output_path.text()) / self.result.run_id)
+            target = export_result(self.result, Path(self.output_path.text()) / self.result.run_id,
+                                   paths=self.paths)
             self.message.setText(f"Exported to {target}")
         except Exception as exc:
             self.message.setText(f"Export failed: {exc}")

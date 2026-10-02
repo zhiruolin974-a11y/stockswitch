@@ -4,8 +4,10 @@ import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
+from src.app.paths import AppPaths, PROJECT_ROOT
 
-ROOT = Path(__file__).resolve().parents[2]
+
+ROOT = PROJECT_ROOT
 
 
 @dataclass(frozen=True)
@@ -38,8 +40,17 @@ class AppConfig:
     backtest_security_profile: str = "unknown"
 
 
-def load_config(path: Path | None = None) -> AppConfig:
-    source = path or (ROOT / "config.toml" if (ROOT / "config.toml").exists() else ROOT / "config.example.toml")
+def load_config(path: Path | None = None, *, paths: AppPaths | None = None) -> AppConfig:
+    paths = paths or AppPaths.for_runtime()
+    if path is not None:
+        source = path
+    elif paths.app_data_dir == ROOT and (ROOT / "config.toml").exists():
+        source = ROOT / "config.toml"
+    elif paths.config_path.exists():
+        source = paths.config_path
+    else:
+        from src.app.paths import resource_path
+        source = resource_path("config.example.toml")
     with source.open("rb") as handle:
         data = tomllib.load(handle)
     app, paper, risk, strategy = (data[key] for key in ("app", "paper", "risk", "strategy"))

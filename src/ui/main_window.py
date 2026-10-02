@@ -12,6 +12,8 @@ from PySide6.QtWidgets import (QAbstractItemView, QComboBox, QHBoxLayout, QLabel
     QVBoxLayout, QWidget, QTabWidget)
 
 from src.market.calendar import SHANGHAI
+from src.app.paths import AppPaths
+from src.app.version import VERSION
 from src.trading.engine import TradingEngine
 from src.trading.models import OrderSide
 from src.ui.backtest_tab import BacktestTab
@@ -91,17 +93,17 @@ class MarketWorker(QThread):
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, engine: TradingEngine):
+    def __init__(self, engine: TradingEngine, *, paths: AppPaths | None = None):
         super().__init__()
         self.engine = engine
         self.worker: MarketWorker | None = None
-        self.setWindowTitle("StockSwitch — PAPER TRADING")
+        self.setWindowTitle(f"StockSwitch {VERSION} — PAPER TRADING")
         self.resize(1050, 780)
         root = QWidget()
         tabs = QTabWidget()
         self.setCentralWidget(tabs)
         tabs.addTab(root, "Live Paper Trading")
-        self.backtest_tab = BacktestTab(engine.config)
+        self.backtest_tab = BacktestTab(engine.config, paths=paths)
         tabs.addTab(self.backtest_tab, "Backtest")
         layout = QVBoxLayout(root)
         layout.addWidget(QLabel("StockSwitch    PAPER TRADING    LIVE MARKET DATA + PAPER TRADING"))
