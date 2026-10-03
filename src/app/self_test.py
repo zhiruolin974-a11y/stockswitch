@@ -8,6 +8,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from PySide6.QtCore import QDate, QTimer
+from PySide6.QtGui import QFontInfo
+from PySide6.QtWidgets import QScrollArea
 
 from src.app.paths import is_frozen, resource_path
 from src.market.calendar import SHANGHAI
@@ -23,7 +25,7 @@ AT = datetime(2026, 9, 28, 10, 0, tzinfo=SHANGHAI)
 def fake_provider() -> FakeMarketDataProvider:
     def frame(price: float, at: datetime) -> dict[str, MarketQuote]:
         def quote(symbol: str) -> MarketQuote:
-            return MarketQuote(symbol, symbol, at, at, price, price, price, price, 9.5,
+            return MarketQuote(symbol, "平安银行" if symbol == "sz000001" else symbol, at, at, price, price, price, price, 9.5,
                                1000, price * 1000, price - 9.5,
                                (price / 9.5 - 1) * 100, "FakeMarketDataProvider", False)
         return {symbol: quote(symbol) for symbol in ("sz000001", *INDEX_SYMBOLS)}
@@ -33,6 +35,7 @@ def fake_provider() -> FakeMarketDataProvider:
 def run_self_test(app, window, engine, paths, outcome: dict[str, bool]) -> None:
     """Exercise GUI, fake paper risk/journal, backtest chart and export; then exit."""
     tab = window.backtest_tab
+    window.paper_tab.first_use_notice_enabled = False
 
     def fail(reason: str) -> None:
         LOG.error("Packaged EXE self-test failed: %s", reason)
@@ -45,11 +48,26 @@ def run_self_test(app, window, engine, paths, outcome: dict[str, bool]) -> None:
             if len(tab.chart.points) < 100 or tab.trades.rowCount() < 1:
                 raise AssertionError("Backtest chart or trade history missing")
             tab.export_button.click()
-            if not tab.message.text().startswith("Exported to "):
+            if not tab.message.text().startswith("已导出至 "):
                 raise AssertionError("Backtest export action failed")
             target = paths.exports_dir / "backtests" / result.run_id
             if not all((target / name).exists() for name in ("summary.json", "trades.csv", "equity_curve.csv")):
                 raise AssertionError("Backtest export missing")
+            from src.ui.main_window import MarketWorker
+            state = MarketWorker(engine).snapshot()
+            state["monitoring"] = False
+            window.render_snapshot(state)
+            screenshots = paths.exports_dir / "self-test" / "screenshots"
+            screenshots.mkdir(parents=True, exist_ok=True)
+            for index, name in enumerate(("overview", "paper", "backtest", "records", "settings")):
+                window.tabs.setCurrentIndex(index)
+                app.processEvents()
+                page = window.tabs.widget(index)
+                scrolls = page.findChildren(QScrollArea)
+                target_widget = scrolls[0].widget() if scrolls else window
+                if not target_widget.grab().save(str(screenshots / f"{name}.png")):
+                    raise AssertionError("Chinese GUI screenshot could not be saved")
+            LOG.info("Chinese GUI rendered; font=%s; screenshots=%s", QFontInfo(app.font()).family(), screenshots)
             LOG.info("Packaged EXE self-test passed: fake paper buy/sell, journal, backtest, chart, export")
             outcome["ok"] = True
             window.close()
@@ -66,8 +84,12 @@ def run_self_test(app, window, engine, paths, outcome: dict[str, bool]) -> None:
                 raise AssertionError("AppPaths/config initialization failed")
             if not paths.database_path.exists() or not resource_path("assets/StockSwitch.ico").exists():
                 raise AssertionError("SQLite/resource initialization failed")
-            if not window.isVisible() or window.centralWidget().count() != 2:
+            if not window.isVisible() or window.centralWidget().count() != 5:
                 raise AssertionError("MainWindow or Phase 1/2 tabs missing")
+            if [window.tabs.tabText(i) for i in range(5)] != ["总览", "模拟交易", "历史回测", "交易记录", "设置"]:
+                raise AssertionError("Chinese navigation missing")
+            if app._stockswitch_qt_translator.isEmpty():
+                raise AssertionError("Qt Chinese widget translations missing")
             prior_trades = engine.journal.count("trades")
             engine.connect()
             engine.poll(AT)
@@ -82,8 +104,8 @@ def run_self_test(app, window, engine, paths, outcome: dict[str, bool]) -> None:
                 raise AssertionError("Fake paper sell failed")
             if engine.journal.count("trades") != prior_trades + 2:
                 raise AssertionError("SQLite journal missing trades")
-            tab.source.setCurrentText("Fake (offline smoke)")
-            tab.security_profile.setCurrentText("main_normal")
+            tab.source.setCurrentIndex(tab.source.findData("fake"))
+            tab.security_profile.setCurrentIndex(tab.security_profile.findData("main_normal"))
             tab.start_date.setDate(QDate(2025, 1, 2))
             tab.end_date.setDate(QDate(2025, 9, 1))
             tab.run_button.click()

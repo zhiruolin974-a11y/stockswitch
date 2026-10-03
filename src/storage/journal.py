@@ -3,11 +3,27 @@ from __future__ import annotations
 import json
 import sqlite3
 from dataclasses import asdict
+from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
 
 from src.portfolio.portfolio import Portfolio, Position
-from src.trading.models import Fill, Order, Trade, TradingSignal
+from src.trading.models import Fill, Order, OrderSide, Trade, TradingSignal
+
+
+@dataclass(frozen=True)
+class JournalTradeRecord:
+    """A persisted paper fill with the strategy recorded on its order."""
+
+    order_id: str
+    timestamp: datetime
+    symbol: str
+    side: OrderSide
+    quantity: int
+    price: float
+    fees: float
+    realized_pnl: float
+    strategy: str
 
 
 class TradeJournal:
@@ -79,6 +95,23 @@ class TradeJournal:
         if table not in {"signals", "risk_decisions", "orders", "fills", "trades", "portfolio_snapshots"}:
             raise ValueError("Unsupported table")
         return self.connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+
+    def list_recent_trades(self, limit: int = 500) -> list[JournalTradeRecord]:
+        """Read the latest paper fills, newest first; never returns backtest trades."""
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 5000:
+            raise ValueError("Trade history limit must be between 1 and 5000")
+        rows = self.connection.execute("""
+            SELECT t.order_id, t.timestamp, t.symbol, t.side, t.quantity,
+                   t.price, t.fees, t.realized_pnl, COALESCE(o.strategy, '')
+            FROM trades AS t LEFT JOIN orders AS o ON o.id = t.order_id
+            ORDER BY t.id DESC LIMIT ?
+        """, (limit,)).fetchall()
+        return [JournalTradeRecord(str(order_id), datetime.fromisoformat(timestamp),
+                                   str(symbol), OrderSide(side), int(quantity),
+                                   float(price), float(fees), float(realized_pnl),
+                                   str(strategy))
+                for order_id, timestamp, symbol, side, quantity, price, fees,
+                    realized_pnl, strategy in rows]
 
     def close(self) -> None:
         self.connection.close()

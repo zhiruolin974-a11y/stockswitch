@@ -36,6 +36,13 @@ class TradingEngine:
         self.stale = True
         self.last_update: datetime | None = None
         self.events: list[str] = []
+        # The GUI can pause/resume simulated strategy signals without changing
+        # the immutable startup configuration or the RiskManager order path.
+        self.strategy_enabled = config.strategy_enabled
+        self.event_records: list[dict] = []
+
+    def set_strategy_enabled(self, enabled: bool) -> None:
+        self.strategy_enabled = bool(enabled)
 
     def connect(self) -> None:
         self.provider.connect()
@@ -77,7 +84,7 @@ class TradingEngine:
                     quote.require_fresh(at, self.config.max_quote_age_seconds)
                 except MarketDataError:
                     self.stale = True
-            if self.rules.can_trade(at) and not self.stale and self.config.strategy_enabled:
+            if self.rules.can_trade(at) and not self.stale and self.strategy_enabled:
                 for symbol, quote in self.latest_quotes.items():
                     signal = self.strategy.on_quote(quote, symbol in self.portfolio.positions)
                     if signal:
@@ -114,6 +121,18 @@ class TradingEngine:
         self.journal.record_order(order)
         event = f"{signal.strategy} {signal.side.value} {signal.symbol}: {order.status.value} ({decision.reason})"
         self.events.append(event)
+        self.event_records.append({
+            "timestamp": now,
+            "symbol": signal.symbol,
+            "side": signal.side,
+            "strategy": signal.strategy,
+            "reference_price": signal.reference_price,
+            "signal_reason": signal.reason,
+            "reason": order.reject_reason or decision.reason,
+            "status": order.status,
+        })
+        if len(self.event_records) > 100:
+            del self.event_records[:-100]
         LOG.info("Signal and risk: %s", event)
         return order, decision
 
