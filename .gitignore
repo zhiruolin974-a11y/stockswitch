@@ -16,6 +16,7 @@ release/
 exports/
 *.egg-info/
 config.toml
+config/
 *.log
 .env
 .env.*

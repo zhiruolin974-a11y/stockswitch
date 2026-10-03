@@ -7,24 +7,29 @@ import time
 from datetime import datetime
 
 from PySide6.QtCore import QThread, Signal
-from PySide6.QtWidgets import (QAbstractItemView, QComboBox, QHBoxLayout, QLabel,
-    QLineEdit, QMainWindow, QPushButton, QSpinBox, QTableWidget, QTableWidgetItem,
-    QVBoxLayout, QWidget, QTabWidget)
+from PySide6.QtWidgets import QApplication, QMainWindow, QTabWidget
 
-from src.market.calendar import SHANGHAI
 from src.app.paths import AppPaths
 from src.app.version import VERSION
+from src.market.calendar import SHANGHAI
 from src.trading.engine import TradingEngine
-from src.trading.models import OrderSide
 from src.ui.backtest_tab import BacktestTab
+from src.ui.dashboard_tab import DashboardTab
+from src.ui.i18n import install_qt_chinese, tr, user_error
+from src.ui.paper_tab import PaperTab
+from src.ui.records_tab import RecordsTab
+from src.ui.settings_tab import SettingsTab
 
 
 LOG = logging.getLogger(__name__)
 
 
 class MarketWorker(QThread):
+    """Owns live data and simulated orders; Qt widgets only receive snapshots."""
+
     updated = Signal(object)
     failed = Signal(str)
+    order_completed = Signal(object)
 
     def __init__(self, engine: TradingEngine):
         super().__init__()
@@ -55,32 +60,74 @@ class MarketWorker(QThread):
                 try:
                     action = command[0]
                     if action == "paper":
-                        self.engine.manual_paper_order(command[1], command[2], command[3], datetime.now(SHANGHAI))
+                        order, decision = self.engine.manual_paper_order(
+                            command[1], command[2], command[3], datetime.now(SHANGHAI))
+                        fill = next((item for item in reversed(self.engine.broker.fills)
+                                     if item.order_id == order.id), None)
+                        trade = next((item for item in reversed(self.engine.broker.trades)
+                                      if item.order_id == order.id), None)
+                        quote = self.engine.latest_quotes.get(order.symbol)
+                        self.order_completed.emit({
+                            "order": order, "decision": decision, "fill": fill, "trade": trade,
+                            "cash": self.engine.portfolio.available_cash,
+                            "name": quote.name if quote else order.symbol,
+                        })
                     elif action == "add":
                         self.engine.add_symbol(command[1])
-                        next_poll = 0
+                        next_poll = 0.0
                     elif action == "remove":
-                        self.engine.remove_symbol(command[1])
+                        from src.market.tencent import validate_symbol
+                        self.engine.remove_symbol(validate_symbol(command[1]))
+                        next_poll = 0.0
+                    elif action == "strategy":
+                        self.engine.set_strategy_enabled(command[1])
                     self.updated.emit(self.snapshot())
                 except Exception as exc:
                     self.failed.emit(str(exc))
+        except Exception as exc:
+            LOG.exception("Market worker could not start")
+            self.failed.emit(str(exc))
         finally:
-            self.engine.disconnect()
+            self.stop_requested.set()
+            try:
+                self.engine.disconnect()
+            except Exception:
+                LOG.exception("Market provider disconnect failed")
             self.updated.emit(self.snapshot())
 
     def snapshot(self) -> dict:
         portfolio = self.engine.portfolio
+        quotes = list(self.engine.latest_quotes.values())
+        indexes = list(self.engine.latest_indexes.values())
+        source = (quotes[0].source if quotes else indexes[0].source if indexes
+                  else self.engine.provider.__class__.__name__)
+        positions = []
+        for position in portfolio.positions.values():
+            quote = self.engine.latest_quotes.get(position.symbol)
+            positions.append({
+                "symbol": position.symbol,
+                "name": quote.name if quote else position.symbol,
+                "quantity": position.quantity,
+                "available_quantity": position.available_quantity,
+                "average_cost": position.average_cost,
+                "market_price": position.market_price,
+                "market_value": position.market_value,
+                "unrealized_pnl": position.unrealized_pnl,
+            })
         return {
             "connected": self.engine.connected,
             "stale": self.engine.stale,
             "last_update": self.engine.last_update,
             "market_state": self.engine.rules.state(datetime.now(SHANGHAI)),
-            "source": "Tencent Finance public quote" if self.engine.provider.__class__.__name__ != "FakeMarketDataProvider" else "FakeMarketDataProvider",
+            "source": source,
+            "delayed": any(quote.is_delayed for quote in (*indexes, *quotes)),
+            "monitoring": not self.stop_requested.is_set(),
             "watchlist": list(self.engine.watchlist),
-            "indexes": list(self.engine.latest_indexes.values()),
-            "quotes": list(self.engine.latest_quotes.values()),
-            "positions": [(p.symbol, p.quantity, p.available_quantity, p.average_cost, p.market_price, p.market_value, p.unrealized_pnl)
-                          for p in portfolio.positions.values()],
+            "indexes": indexes,
+            "quotes": quotes,
+            "positions": positions,
+            "initial_cash": portfolio.initial_cash,
+            "day_start_equity": portfolio.day_start_equity,
             "cash": portfolio.available_cash,
             "market_value": portfolio.market_value,
             "equity": portfolio.total_equity,
@@ -88,81 +135,73 @@ class MarketWorker(QThread):
             "unrealized": portfolio.unrealized_pnl,
             "daily": portfolio.daily_pnl,
             "events": list(self.engine.events[-30:]),
-            "strategy": self.engine.config.strategy_enabled,
+            "event_records": list(self.engine.event_records[-30:]),
+            "trade_records": self.engine.journal.list_recent_trades(limit=200),
+            "strategy": self.engine.strategy_enabled,
         }
 
 
 class MainWindow(QMainWindow):
     def __init__(self, engine: TradingEngine, *, paths: AppPaths | None = None):
         super().__init__()
+        install_qt_chinese(QApplication.instance())
         self.engine = engine
+        # Desktop automatic simulation requires the user's explicit startup
+        # confirmation. The engine's strategy and risk calculations are intact.
+        self.engine.set_strategy_enabled(False)
+        self.paths = paths or AppPaths.for_runtime()
         self.worker: MarketWorker | None = None
-        self.setWindowTitle(f"StockSwitch {VERSION} — PAPER TRADING")
-        self.resize(1050, 780)
-        root = QWidget()
-        tabs = QTabWidget()
-        self.setCentralWidget(tabs)
-        tabs.addTab(root, "Live Paper Trading")
-        self.backtest_tab = BacktestTab(engine.config, paths=paths)
-        tabs.addTab(self.backtest_tab, "Backtest")
-        layout = QVBoxLayout(root)
-        layout.addWidget(QLabel("StockSwitch    PAPER TRADING    LIVE MARKET DATA + PAPER TRADING"))
-        self.status_label = QLabel("Disconnected | Data Source: Tencent Finance | Approximate Real-Time / Delayed")
-        layout.addWidget(self.status_label)
+        self.setWindowTitle(f"StockSwitch - A股模拟交易与量化研究  {VERSION}")
+        self.resize(1180, 820)
+        self.tabs = QTabWidget()
+        self.setCentralWidget(self.tabs)
 
-        controls = QHBoxLayout()
-        self.start_button = QPushButton("Start Monitoring")
-        self.stop_button = QPushButton("Stop Monitoring")
-        self.stop_button.setEnabled(False)
-        self.start_button.clicked.connect(self.start_monitoring)
-        self.stop_button.clicked.connect(self.stop_monitoring)
-        controls.addWidget(self.start_button)
-        controls.addWidget(self.stop_button)
-        self.symbol_input = QLineEdit()
-        self.symbol_input.setPlaceholderText("A-share code, e.g. 000001 or sz000001")
-        controls.addWidget(self.symbol_input)
-        add_button = QPushButton("Add")
-        remove_button = QPushButton("Remove")
-        add_button.clicked.connect(lambda: self.queue_command("add", self.symbol_input.text()))
-        remove_button.clicked.connect(lambda: self.queue_command("remove", self.symbol_input.text().strip().lower()))
-        controls.addWidget(add_button)
-        controls.addWidget(remove_button)
-        layout.addLayout(controls)
+        self.dashboard_tab = DashboardTab(engine.config)
+        self.paper_tab = PaperTab(engine.config, paths=self.paths)
+        self.backtest_tab = BacktestTab(engine.config, paths=self.paths)
+        self.records_tab = RecordsTab()
+        self.settings_tab = SettingsTab(engine.config, paths=self.paths)
+        for widget, title in (
+            (self.dashboard_tab, tr("nav.overview")),
+            (self.paper_tab, tr("nav.paper")),
+            (self.backtest_tab, tr("nav.backtest")),
+            (self.records_tab, tr("nav.records")),
+            (self.settings_tab, tr("nav.settings")),
+        ):
+            self.tabs.addTab(widget, title)
 
-        self.index_table = self._table(["Index", "Value", "Change", "Change %", "Updated"])
-        self.quote_table = self._table(["Code", "Name", "Last", "Change %", "Volume (shares)", "Updated", "Data"])
-        self.position_table = self._table(["Code", "Qty", "Available T+1", "Avg Cost", "Market Price", "Value", "Unrealized PnL"])
-        self.signal_table = self._table(["Signal / Paper Order / Risk Result"])
-        for title, table in (("Market Indices", self.index_table), ("Watchlist", self.quote_table),
-                             ("SIMULATED / PAPER Positions", self.position_table), ("Signals and Risk Decisions", self.signal_table)):
-            layout.addWidget(QLabel(title))
-            layout.addWidget(table)
+        self.index_table = self.dashboard_tab.index_table
+        self.quote_table = self.dashboard_tab.quote_table
+        self.status_label = self.dashboard_tab.status_label
+        self.start_button = self.dashboard_tab.start_button
+        self.stop_button = self.dashboard_tab.stop_button
+        self.dashboard_tab.start_requested.connect(self.start_monitoring)
+        self.dashboard_tab.stop_requested.connect(self.stop_monitoring)
+        self.dashboard_tab.add_symbol_requested.connect(lambda symbol: self.queue_command("add", symbol))
+        self.dashboard_tab.remove_symbol_requested.connect(lambda symbol: self.queue_command("remove", symbol))
+        self.paper_tab.order_requested.connect(
+            lambda symbol, side, quantity: self.queue_command("paper", symbol, side, quantity))
+        self.paper_tab.auto_toggle_requested.connect(
+            lambda enabled: self.queue_command("strategy", enabled))
+        self.paper_tab.quote_requested.connect(lambda symbol: self.queue_command("add", symbol))
+        self.backtest_tab.result_ready.connect(self.records_tab.set_backtest_result)
+        self.tabs.currentChanged.connect(self._on_tab_changed)
+        self.statusBar().showMessage("仅模拟交易 · 不连接券商或真实账户")
+        self.setStyleSheet("""
+            QMainWindow, QTabWidget::pane { background: #f5f7fa; color: #1d2939; }
+            QTabBar::tab { padding: 10px 20px; color: #475467; background: #e9edf2; }
+            QTabBar::tab:selected { color: #17365d; background: #ffffff; border-top: 2px solid #376c9f; }
+            QTableWidget { background: #ffffff; alternate-background-color: #f8fafc;
+                           border: 1px solid #dce3ea; gridline-color: #edf1f5; }
+            QPushButton { padding: 6px 12px; }
+            QGroupBox { font-weight: 600; border: 1px solid #dce3ea;
+                        border-radius: 4px; margin-top: 10px; padding-top: 10px; }
+            QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 4px; }
+        """)
 
-        paper_controls = QHBoxLayout()
-        self.paper_symbol = QComboBox()
-        self.paper_symbol.addItems(engine.watchlist)
-        self.quantity = QSpinBox()
-        self.quantity.setRange(100, 100000)
-        self.quantity.setSingleStep(engine.config.lot_size)
-        self.quantity.setValue(engine.config.lot_size)
-        buy = QPushButton("SIMULATED / PAPER Buy")
-        sell = QPushButton("SIMULATED / PAPER Sell")
-        buy.clicked.connect(lambda: self.queue_command("paper", self.paper_symbol.currentText(), OrderSide.BUY, self.quantity.value()))
-        sell.clicked.connect(lambda: self.queue_command("paper", self.paper_symbol.currentText(), OrderSide.SELL, self.quantity.value()))
-        for widget in (self.paper_symbol, self.quantity, buy, sell):
-            paper_controls.addWidget(widget)
-        layout.addLayout(paper_controls)
-        self.account_label = QLabel("Cash 100000 | Market Value 0 | Total Equity 100000 | Realized 0 | Unrealized 0 | Daily 0")
-        layout.addWidget(self.account_label)
-        self.statusBar().showMessage("Paper Trading | Strategy Enabled" if engine.config.strategy_enabled else "Paper Trading | Strategy Disabled")
-
-    @staticmethod
-    def _table(headers: list[str]) -> QTableWidget:
-        table = QTableWidget(0, len(headers))
-        table.setHorizontalHeaderLabels(headers)
-        table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        table.horizontalHeader().setStretchLastSection(True)
-        return table
+    def _on_tab_changed(self, index: int) -> None:
+        if index == 1:
+            self.paper_tab.show_first_use_notice()
 
     def start_monitoring(self) -> None:
         if self.worker and self.worker.isRunning():
@@ -170,16 +209,22 @@ class MainWindow(QMainWindow):
         self.worker = MarketWorker(self.engine)
         self.worker.updated.connect(self.render_snapshot)
         self.worker.failed.connect(self.show_error)
+        self.worker.order_completed.connect(self.paper_tab.show_order_result)
         self.worker.start()
         self.start_button.setEnabled(False)
         self.stop_button.setEnabled(True)
+        self.statusBar().showMessage("正在连接行情…")
 
     def stop_monitoring(self) -> None:
         if self.worker and self.worker.isRunning():
             self.worker.stop_requested.set()
-            self.worker.wait(10000)
+            if not self.worker.wait(10000):
+                LOG.warning("Market worker did not stop within 10 seconds")
+                self.statusBar().showMessage("行情线程尚未停止，请稍后再试")
+                return
         self.start_button.setEnabled(True)
         self.stop_button.setEnabled(False)
+        self.statusBar().showMessage("行情监控已停止；模拟交易不可用")
 
     def queue_command(self, *command) -> None:
         if not self.worker or not self.worker.isRunning():
@@ -188,42 +233,24 @@ class MainWindow(QMainWindow):
         self.worker.commands.put(command)
 
     def show_error(self, message: str) -> None:
-        self.statusBar().showMessage(f"Disconnected / Data Stale: {message}", 10000)
         LOG.warning("GUI market/command error: %s", message)
-
-    @staticmethod
-    def _fill_table(table: QTableWidget, rows: list[list[str]]) -> None:
-        table.setRowCount(len(rows))
-        for row_number, row in enumerate(rows):
-            for column, value in enumerate(row):
-                table.setItem(row_number, column, QTableWidgetItem(str(value)))
+        self.statusBar().showMessage(user_error(message), 10000)
+        self.paper_tab.show_command_error(user_error(message))
 
     def render_snapshot(self, state: dict) -> None:
-        updated = state["last_update"].strftime("%Y-%m-%d %H:%M:%S") if state["last_update"] else "Never"
-        condition = ("Connected / Data Stale" if state["connected"] and state["stale"] else
-                     "Connected" if state["connected"] else "Disconnected / Data Stale")
-        self.status_label.setText(f"{condition} | Data Source: {state['source']} | Last Update: {updated} | "
-                                  f"{state['market_state']} | Approximate Real-Time / Delayed | PAPER TRADING | "
-                                  f"Strategy {'Enabled' if state['strategy'] else 'Disabled'}")
+        self.dashboard_tab.render_snapshot(state)
+        self.paper_tab.render_snapshot(state)
+        self.records_tab.set_paper_records(state["trade_records"])
         self.statusBar().showMessage(self.status_label.text())
-        stale = "STALE" if state["stale"] else "Approximate / Delayed"
-        self._fill_table(self.index_table, [[q.name, f"{q.last_price:.2f}", f"{q.change:+.2f}",
-                         f"{q.change_percent:+.2f}%", q.timestamp.strftime("%H:%M:%S")]
-                         for q in state["indexes"]])
-        self._fill_table(self.quote_table, [[q.symbol, q.name, f"{q.last_price:.2f}", f"{q.change_percent:+.2f}%",
-                         f"{q.volume:.0f}", q.timestamp.strftime("%H:%M:%S"), stale] for q in state["quotes"]])
-        self._fill_table(self.position_table, [[symbol, qty, available, f"{cost:.2f}", f"{price:.2f}",
-                         f"{value:.2f}", f"{pnl:+.2f}"] for symbol, qty, available, cost, price, value, pnl in state["positions"]])
-        self._fill_table(self.signal_table, [[event] for event in reversed(state["events"])])
-        self.paper_symbol.clear()
-        self.paper_symbol.addItems(state["watchlist"])
-        self.account_label.setText(f"Cash {state['cash']:.2f} | Market Value {state['market_value']:.2f} | "
-                                   f"Total Equity {state['equity']:.2f} | Realized PnL {state['realized']:+.2f} | "
-                                   f"Unrealized PnL {state['unrealized']:+.2f} | Daily PnL {state['daily']:+.2f}")
 
     def closeEvent(self, event) -> None:
         self.backtest_tab.stop()
         self.stop_monitoring()
+        if ((self.worker and self.worker.isRunning()) or
+                (self.backtest_tab.worker and self.backtest_tab.worker.isRunning())):
+            self.statusBar().showMessage("后台任务正在停止，请稍后关闭窗口。")
+            event.ignore()
+            return
         self.engine.journal.close()
         LOG.info("Application closed")
         super().closeEvent(event)

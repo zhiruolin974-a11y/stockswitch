@@ -23,8 +23,8 @@ def main() -> int:
     def report_exception(exc_type, exc_value, traceback):
         logging.critical("Unhandled exception", exc_info=(exc_type, exc_value, traceback))
         if app is not None and message_box is not None and paths is not None:
-            message_box.critical(None, "StockSwitch", "StockSwitch encountered an unexpected error.\n"
-                                 f"Please see {paths.log_path}")
+            message_box.critical(None, "StockSwitch", "程序遇到未预期错误。\n"
+                                 f"请查看日志：{paths.log_path}")
 
     sys.excepthook = report_exception
     threading.excepthook = lambda args: report_exception(args.exc_type, args.exc_value, args.exc_traceback)
@@ -49,7 +49,7 @@ def main() -> int:
             logging.info("Network smoke completed")
             return 0
 
-        from PySide6.QtGui import QIcon
+        from PySide6.QtGui import QFont, QIcon
         from PySide6.QtWidgets import QApplication, QMessageBox
 
         from src.app.config import load_config
@@ -66,6 +66,7 @@ def main() -> int:
         journal = TradeJournal(paths.database_path)
         engine = TradingEngine(fake_provider() if self_test else TencentMarketDataProvider(), config, journal)
         app = QApplication(sys.argv)
+        app.setFont(QFont("Microsoft YaHei UI", 9))
         icon = resource_path("assets/StockSwitch.ico")
         if icon.exists():
             app.setWindowIcon(QIcon(str(icon)))
@@ -83,11 +84,11 @@ def main() -> int:
     except Exception:
         logging.exception("Fatal startup/runtime error")
         if app is not None and message_box is not None and paths is not None:
-            message_box.critical(None, "StockSwitch", "StockSwitch encountered an unexpected error.\n"
-                                 f"Please see {paths.log_path}")
+            message_box.critical(None, "StockSwitch", "程序遇到未预期错误。\n"
+                                 f"请查看日志：{paths.log_path}")
         elif not smoke_mode:
             # Startup can fail before Qt or logging exists; do not silently exit.
             import ctypes
-            ctypes.windll.user32.MessageBoxW(None, "StockSwitch could not start. Check LocalAppData access.",
+            ctypes.windll.user32.MessageBoxW(None, "StockSwitch 无法启动，请检查用户数据目录访问权限。",
                                               "StockSwitch", 0x10)
         return 1

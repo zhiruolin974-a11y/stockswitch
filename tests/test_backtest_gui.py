@@ -9,6 +9,7 @@ from PySide6.QtCore import QDate, QTimer
 from PySide6.QtWidgets import QApplication, QTabWidget
 
 from src.app.config import ROOT
+from src.app.paths import AppPaths
 from src.market.fake import FakeMarketDataProvider
 from src.storage.journal import TradeJournal
 from src.trading.engine import TradingEngine
@@ -22,15 +23,15 @@ class BacktestGuiTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(dir=ROOT) as directory:
             journal = TradeJournal(Path(directory) / "paper.sqlite")
             engine = TradingEngine(FakeMarketDataProvider([frame()]), config(), journal)
-            window = MainWindow(engine)
+            window = MainWindow(engine, paths=AppPaths(Path(directory)))
             window.show()
             tabs = window.centralWidget()
             self.assertIsInstance(tabs, QTabWidget)
-            self.assertEqual(tabs.tabText(0), "Live Paper Trading")
-            tabs.setCurrentIndex(1)
+            self.assertEqual(tabs.tabText(0), "总览")
+            tabs.setCurrentIndex(2)
             tab = window.backtest_tab
-            tab.source.setCurrentText("Fake (offline smoke)")
-            tab.security_profile.setCurrentText("main_normal")
+            tab.source.setCurrentIndex(tab.source.findData("fake"))
+            tab.security_profile.setCurrentIndex(tab.security_profile.findData("main_normal"))
             tab.start_date.setDate(QDate(2025, 1, 2))
             tab.end_date.setDate(QDate(2025, 9, 1))
             tab.output_path.setText(str(Path(directory) / "exports"))
@@ -49,16 +50,17 @@ class BacktestGuiTests(unittest.TestCase):
             self.assertTrue((exported / "trades.csv").exists())
             self.assertTrue((exported / "equity_curve.csv").exists())
             tabs.setCurrentIndex(0)
-            self.assertIn("PAPER TRADING", window.windowTitle())
+            self.assertIn("A股模拟交易与量化研究", window.windowTitle())
+            self.assertIs(window.records_tab.backtest_result, tab.result)
             window.close()
 
     def test_gui_cancel_prevents_result(self):
         app = QApplication.instance() or QApplication([])
         with tempfile.TemporaryDirectory(dir=ROOT) as directory:
             journal = TradeJournal(Path(directory) / "paper.sqlite")
-            window = MainWindow(TradingEngine(FakeMarketDataProvider([frame()]), config(), journal))
+            window = MainWindow(TradingEngine(FakeMarketDataProvider([frame()]), config(), journal), paths=AppPaths(Path(directory)))
             tab = window.backtest_tab
-            tab.source.setCurrentText("Fake (offline smoke)")
+            tab.source.setCurrentIndex(tab.source.findData("fake"))
             tab.start_date.setDate(QDate(2025, 1, 2))
             tab.end_date.setDate(QDate(2025, 9, 1))
             tab.run_button.click()
@@ -68,5 +70,5 @@ class BacktestGuiTests(unittest.TestCase):
             QTimer.singleShot(3000, app.quit)
             app.exec()
             self.assertIsNone(tab.result)
-            self.assertIn("cancelled", tab.message.text().lower())
+            self.assertIn("已取消", tab.message.text())
             window.close()

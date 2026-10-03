@@ -10,6 +10,7 @@ from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication
 
 from src.app.config import ROOT
+from src.app.paths import AppPaths
 from src.market.fake import FakeMarketDataProvider
 from src.market.models import MarketDataError
 from src.storage.journal import TradeJournal
@@ -43,6 +44,20 @@ class EngineJournalTests(unittest.TestCase):
         self.assertEqual(order.status, OrderStatus.FILLED)
         for table in ("signals", "risk_decisions", "orders", "fills", "trades", "portfolio_snapshots"):
             self.assertGreater(self.journal.count(table), 0, table)
+        self.assertEqual(engine.event_records[-1]["side"], OrderSide.BUY)
+
+    def test_runtime_strategy_switch_keeps_manual_orders_on_risk_path(self):
+        engine = self.engine([frame()])
+        engine.set_strategy_enabled(False)
+        self.assertFalse(engine.strategy_enabled)
+        engine.connect()
+        engine.poll(OPEN)
+        order, decision = engine.manual_paper_order("sz000001", OrderSide.BUY, 100, OPEN)
+        self.assertTrue(decision.accepted)
+        self.assertEqual(order.status, OrderStatus.FILLED)
+        self.assertEqual(self.journal.count("risk_decisions"), 1)
+        engine.set_strategy_enabled(True)
+        self.assertTrue(engine.strategy_enabled)
 
     def test_restart_loads_position_and_t_plus_one(self):
         engine = self.engine([frame()])
@@ -101,11 +116,12 @@ class EngineJournalTests(unittest.TestCase):
     def test_gui_smoke_with_fake_provider(self):
         app = QApplication.instance() or QApplication([])
         engine = self.engine([frame()])
-        window = MainWindow(engine)
+        window = MainWindow(engine, paths=AppPaths(Path(self.temp.name)))
         window.show()
         window.start_monitoring()
         QTimer.singleShot(600, app.quit)
         app.exec()
-        self.assertIn("PAPER TRADING", window.windowTitle())
+        self.assertIn("A股模拟交易与量化研究", window.windowTitle())
+        self.assertEqual(window.centralWidget().count(), 5)
         self.assertEqual(window.index_table.rowCount(), 4)
         window.close()

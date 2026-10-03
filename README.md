@@ -1,6 +1,20 @@
-# StockSwitch — Phase 2.5 Windows desktop packaging
+# StockSwitch — A 股模拟交易与量化研究
 
-StockSwitch is a personal research and learning desktop application for **live-data paper trading and historical backtesting only**. It uses virtual cash and simulated fills. It never connects to a real securities account or sends a real order. **Backtest performance is not future performance.** No investment return is promised.
+StockSwitch 是用于学习和研究的 Windows 桌面应用，提供公开行情下的**虚拟资金模拟交易**和历史回测。它不连接真实证券账户，不读取账户资产或凭据，也不发送真实订单。历史业绩不代表未来收益。
+
+## 中文界面
+
+界面默认使用简体中文，主导航按日常使用顺序组织：
+
+- **总览**：查看虚拟账户资产、可用资金、今日和累计盈亏、四个主要指数及自选行情。行情来源、报价时间与延迟/过期状态可在详情和提示中查看。
+- **模拟交易**：查看持仓，确认后手动模拟买卖；已有趋势突破策略可在此启用或停止。无论手动还是策略信号，订单都经过同一个风险管理器，仅使用虚拟资金。
+- **历史回测**：设置日期、股票、资金、基准和证券类别，用历史行情研究策略表现；查看中文业绩指标、资金曲线和导出结果。回测不会发送订单。
+- **交易记录**：查看本机最近 200 笔模拟成交；本次会话完成的回测成交可切换查看。过去回测的逐笔记录未持久化，不会被误写成可查的历史成交。
+- **设置**：按常规、模拟账户、成本、风控和数据目录查看当前参数。只读参数需要编辑用户配置文件并重启，不提供无效的“保存”按钮。
+
+首次进入模拟交易页会提示虚拟资金边界，可选择不再提示。桌面界面每次启动先停止自动模拟，在模拟交易页确认后才启用；可随时停止。输入新代码后可使用“查询 / 添加股票”取得参考行情。金额统一以人民币显示，收益率以百分比显示，A 股习惯中的盈利/上涨用红色、亏损/下跌用绿色。英文交易状态和风控原因只保留在内部代码与日志中，界面展示中文解释。
+
+使用 frozen `--self-test` 时，五页中文界面截图保存在测试数据目录的 `exports/self-test/screenshots/`。截图、用户配置和测试输出均不提交 Git。界面使用 Windows 系统的 Microsoft YaHei UI 字体，发行包不附带字体文件。
 
 ## Windows installation and running
 
